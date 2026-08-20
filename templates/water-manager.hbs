@@ -1,0 +1,63 @@
+<section class="pf1e-aw-manager">
+  <p class="pf1e-aw-scene"><i class="fas fa-map"></i> Сцена: <strong>{{sceneName}}</strong></p>
+
+  <div class="pf1e-aw-toolbar">
+    <button type="button" data-action="detect"><i class="fas fa-eye-dropper"></i> Определить кликом</button>
+    <button type="button" data-action="draw"><i class="fas fa-draw-polygon"></i> Нарисовать область</button>
+    <button type="button" data-action="import"><i class="fas fa-file-import"></i> Импорт Dungeondraft</button>
+    <input type="file" name="dungeondraft-file" accept=".dungeondraft_map,.json,application/json" hidden>
+  </div>
+
+  <p class="notes pf1e-aw-import-note">
+    Импорт Dungeondraft экспериментальный: внутренний формат Water Tool зависит от версии редактора. После импорта проверьте контуры.
+  </p>
+
+  {{#if geometryMode}}
+    <div class="pf1e-aw-geometry-actions">
+      {{#if editingShape}}
+        <strong><i class="fas fa-vector-square"></i> Редактирование: {{editingAreaName}}</strong>
+        <span>Перетаскивайте вершины, добавляйте точки кликом по линии, удаляйте клавишей Delete. Для воды нужно хотя бы три соединённые точки; удаление последней точки удалит область. Ctrl+Z отменяет последнее изменение.</span>
+        <div class="flexrow">
+          <button type="button" data-action="undo-shape"><i class="fas fa-undo"></i> Отменить</button>
+          <button type="button" data-action="cancel-shape"><i class="fas fa-times"></i> Не сохранять</button>
+          <button type="button" data-action="save-shape"><i class="fas fa-save"></i> Сохранить контур</button>
+        </div>
+      {{else}}
+        <strong><i class="fas fa-draw-polygon"></i> Рисование области</strong>
+        <span>Ctrl+Z отменяет последнюю точку. Двойной клик сохраняет контур; вода появится, когда в нём будет хотя бы три соединённые точки.</span>
+        <div class="flexrow">
+          <button type="button" data-action="undo-shape"><i class="fas fa-undo"></i> Отменить точку</button>
+          <button type="button" data-action="cancel-shape"><i class="fas fa-times"></i> Отмена</button>
+        </div>
+      {{/if}}
+    </div>
+  {{/if}}
+
+  <h3><i class="fas fa-water"></i> Водные области</h3>
+  {{#if hasAreas}}
+    <ol class="pf1e-aw-area-list">
+      {{#each areas}}
+        <li data-area-id="{{id}}" class="{{#unless enabled}}is-disabled{{/unless}}">
+          <button type="button" class="pf1e-aw-visibility" data-action="toggle" title="Показать или скрыть">
+            <i class="fas {{#if enabled}}fa-eye{{else}}fa-eye-slash{{/if}}"></i>
+          </button>
+          <div class="pf1e-aw-area-summary">
+            <strong>{{name}}</strong>
+            <span>{{sourceLabel}} · вершин: {{points}}</span>
+          </div>
+          <div class="pf1e-aw-area-actions">
+            <button type="button" data-action="edit-shape" title="Редактировать контур"><i class="fas fa-vector-square"></i></button>
+            <button type="button" data-action="edit" title="Настройки эффекта"><i class="fas fa-sliders-h"></i></button>
+            <button type="button" data-action="delete" title="Удалить"><i class="fas fa-trash"></i></button>
+          </div>
+        </li>
+      {{/each}}
+    </ol>
+    <button type="button" class="pf1e-aw-danger" data-action="clear"><i class="fas fa-trash-alt"></i> Удалить все области сцены</button>
+  {{else}}
+    <div class="pf1e-aw-empty">
+      <i class="fas fa-water"></i>
+      <p>На этой сцене ещё нет водных областей.</p>
+    </div>
+  {{/if}}
+</section>

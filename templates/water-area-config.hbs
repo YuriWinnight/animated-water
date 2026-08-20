@@ -1,0 +1,63 @@
+<form class="pf1e-aw-config {{cssClass}}" autocomplete="off">
+  <div class="form-group">
+    <label>Название</label>
+    <input type="text" name="name" value="{{area.name}}">
+  </div>
+  <div class="form-group">
+    <label>Область включена</label>
+    <input type="checkbox" name="enabled" {{checked area.enabled}}>
+  </div>
+  <div class="form-group">
+    <label>Пресет волн</label>
+    <div class="form-fields">
+      <select name="settings.wavePreset">
+        {{selectOptions wavePresets selected=area.settings.wavePreset}}
+      </select>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Скорость</label>
+    <div class="form-fields">
+      <input type="range" data-live-value name="settings.speed" value="{{area.settings.speed}}" min="0" max="2" step="0.05">
+      <output data-live-output="settings.speed">{{area.settings.speed}}</output>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Размер волн</label>
+    <div class="form-fields">
+      <input type="range" data-live-value name="settings.waveScale" value="{{area.settings.waveScale}}" min="10" max="300" step="5">
+      <output data-live-output="settings.waveScale">{{area.settings.waveScale}}</output>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Искажение, пикс.</label>
+    <div class="form-fields">
+      <input type="range" data-live-value name="settings.distortion" value="{{area.settings.distortion}}" min="0" max="12" step="0.1">
+      <output data-live-output="settings.distortion">{{area.settings.distortion}}</output>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Оттенок</label>
+    <div class="form-fields">
+      <input type="color" data-live-value name="settings.tint" value="{{area.settings.tint}}">
+      <output data-live-output="settings.tint">{{area.settings.tint}}</output>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Сила оттенка</label>
+    <div class="form-fields">
+      <input type="range" data-live-value name="settings.tintStrength" value="{{area.settings.tintStrength}}" min="0" max="1" step="0.01">
+      <output data-live-output="settings.tintStrength">{{area.settings.tintStrength}}</output>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Непрозрачность</label>
+    <div class="form-fields">
+      <input type="range" data-live-value name="settings.opacity" value="{{area.settings.opacity}}" min="0" max="1" step="0.01">
+      <output data-live-output="settings.opacity">{{area.settings.opacity}}</output>
+    </div>
+  </div>
+  <footer class="sheet-footer flexrow">
+    <button type="submit"><i class="fas fa-save"></i> Сохранить</button>
+  </footer>
+</form>
