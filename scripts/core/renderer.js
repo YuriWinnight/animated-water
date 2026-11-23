@@ -1,5 +1,5 @@
 import { LEGACY_MODULE_ID, MODULE_ID, readDocumentFlag } from "../constants.js";
-import { pointInPolygon, signedArea } from "../utils/geometry.js";
+import { pointInPolygon, polygonBounds, signedArea } from "../utils/geometry.js";
 import { WaterStore } from "./store.js";
 
 const VERTEX_SHADER = `
@@ -31,6 +31,10 @@ const FRAGMENT_SHADER = `
   uniform sampler2D uDungeondraftRipple;
   uniform float uUseTokenMask;
   uniform float uDirectToken;
+  uniform float uSurface;
+  uniform float uLocalSource;
+  uniform float uOpacity;
+  uniform vec4 inputClamp;
   uniform highp vec4 inputSize;
   uniform float uTime;
   uniform float uWaveScale;
@@ -74,13 +78,20 @@ const FRAGMENT_SHADER = `
   }
 
   void main(void) {
-    if (vSceneCoord.x < 0.0 || vSceneCoord.y < 0.0 || vSceneCoord.x > 1.0 || vSceneCoord.y > 1.0) discard;
+    vec4 original = texture2D(uSampler, vTextureCoord);
+    if (vSceneCoord.x < 0.0 || vSceneCoord.y < 0.0 || vSceneCoord.x > 1.0 || vSceneCoord.y > 1.0) {
+      if (uSurface > 0.5) { gl_FragColor = original; return; }
+      discard;
+    }
     float maskAlpha = 1.0;
     if (uDirectToken < 0.5) {
       maskAlpha = texture2D(uMask, vSceneCoord).a;
       if (uUseTokenMask > 0.5) maskAlpha *= texture2D(uTokenMask, vSceneCoord).a;
     }
-    if (maskAlpha < 0.01) discard;
+    if (maskAlpha < 0.01) {
+      if (uSurface > 0.5) { gl_FragColor = original; return; }
+      discard;
+    }
     vec2 size = max(uTextureSize, vec2(1.0));
     float scale = max(uWaveScale, 1.0);
     vec2 position = vSceneCoord * size / scale;
@@ -153,13 +164,17 @@ const FRAGMENT_SHADER = `
       float caustic = pow(ripple, 7.0) * 0.055;
       shimmer = (waveX + waveY) * 0.026 + caustic;
     }
-    if (uDirectToken > 0.5) {
+    if (uDirectToken > 0.5 || uLocalSource > 0.5) {
       vec2 tokenScreenFraction = max(inputSize.xy * uScreenPixel, vec2(0.001));
       offset /= tokenScreenFraction;
     }
-    vec4 color = texture2D(uSampler, clamp(vTextureCoord + offset, vec2(0.001), vec2(0.999)));
+    vec4 color = texture2D(uSampler, clamp(vTextureCoord + offset, inputClamp.xy, inputClamp.zw));
     color.rgb = mix(color.rgb, color.rgb * uTint, clamp(uTintStrength, 0.0, 1.0));
-    color.rgb += shimmer * clamp(uDistortion / 4.0, 0.0, 1.0);
+    color.rgb += shimmer * clamp(uDistortion / 4.0, 0.0, 1.0) * color.a;
+    if (uSurface > 0.5) {
+      gl_FragColor = mix(original, color, maskAlpha * uOpacity);
+      return;
+    }
     gl_FragColor = vec4(color.rgb * maskAlpha, color.a * maskAlpha);
   }
 `;
@@ -181,6 +196,8 @@ export class WaterRenderer {
     this.textures = [];
     this.maskTextures = [];
     this.tokenFilterBindings = [];
+    this.surfaceFilterBindings = [];
+    this.overlayBindings = [];
     this.areaPreviews = new Map();
     this.submersionMaskTexture = null;
     this.submersionMaskCanvas = null;
@@ -255,11 +272,14 @@ export class WaterRenderer {
     }
 
     this.background = canvas.primary?.background;
-    const sourceTexture = this.background?.texture;
-    if (!this.background || !sourceTexture || !sourceTexture.valid) {
-      console.warn(`${MODULE_ID} | Не удалось получить текстуру фона сцены`);
-      return;
+    if (!this.background?.texture?.valid || this.background.texture === PIXI.Texture.EMPTY) {
+      const rect = canvas.dimensions?.sceneRect;
+      if (!rect) return;
+      this.background = { position: { x: rect.x, y: rect.y }, anchor: { x: 0, y: 0 },
+        width: rect.width, height: rect.height,
+        texture: { orig: { width: rect.width, height: rect.height } } };
     }
+    const sourceTexture = this.background.texture;
 
     this.container = new PIXI.Container();
     this.container.name = `${MODULE_ID}-effects`;
@@ -289,33 +309,56 @@ export class WaterRenderer {
     }
 
     const submergedTokens = this._getSubmergedTokens();
+    const surfaces = this._getSurfaceMeshes();
     if (submergedTokens.length) this._createSubmersionMaskTexture(sourceTexture, submergedTokens);
     for (const area of areas) {
       const maskTexture = this._createMaskTexture(area, sourceTexture);
-      this._createAreaEffect(area, sourceTexture, maskTexture, false);
-      if (this.submersionMaskTexture) this._createAreaEffect(area, sourceTexture, maskTexture, true);
+      for (const mesh of surfaces) {
+        if (!this._surfaceIntersectsArea(mesh, area)) continue;
+        this._createAreaEffect(area, sourceTexture, maskTexture, false, mesh);
+        if (this.submersionMaskTexture && !mesh.object?.document?.overhead) {
+          this._createAreaEffect(area, sourceTexture, maskTexture, true, mesh);
+        }
+      }
     }
     for (const token of submergedTokens) this._createTokenEffect(token, areas, sourceTexture);
     canvas.app.ticker.add(this._tick);
   }
 
-  _createAreaEffect(area, sourceTexture, maskTexture, submersion) {
-    const texture = new PIXI.Texture(sourceTexture.baseTexture, sourceTexture.frame, sourceTexture.orig, sourceTexture.trim, sourceTexture.rotate);
-    this.textures.push(texture);
-    const sprite = new PIXI.Sprite(texture);
-    sprite.anchor.set(
-      Number(this.background.anchor?.x ?? 0),
-      Number(this.background.anchor?.y ?? 0)
-    );
-    sprite.position.copyFrom(this.background.position);
-    sprite.pivot.copyFrom(this.background.pivot);
-    sprite.skew.copyFrom(this.background.skew);
-    sprite.rotation = this.background.rotation;
-    sprite.width = this.background.width;
-    sprite.height = this.background.height;
+  _getSurfaceMeshes() {
+    const meshes = new Set([canvas.primary?.background,
+      ...(canvas.tiles?.placeables ?? []).map((tile) => tile.mesh)]);
+    const order = canvas.primary?.children ?? [];
+    return [...meshes].filter((mesh) => mesh && !mesh.destroyed && mesh.texture?.valid
+      && mesh.texture !== PIXI.Texture.EMPTY)
+      .sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  }
+
+  _surfaceIntersectsArea(mesh, area) {
+    const bounds = mesh.object?.bounds;
+    if (!bounds) return true;
+    const region = polygonBounds(area.geometry.polygons);
+    return region && bounds.x <= region.maxX && bounds.y <= region.maxY
+      && bounds.x + bounds.width >= region.minX && bounds.y + bounds.height >= region.minY;
+  }
+
+  _syncOverlay({ mesh, sprite, opacity }) {
+    if (mesh.destroyed) { sprite.visible = false; return; }
+    sprite.texture = mesh.texture;
+    sprite.anchor.set(mesh.anchor?.x ?? 0, mesh.anchor?.y ?? 0);
+    sprite.position.copyFrom(mesh.position);
+    sprite.pivot.copyFrom(mesh.pivot);
+    sprite.skew.copyFrom(mesh.skew);
+    sprite.rotation = mesh.rotation;
+    if (mesh.scale && sprite.scale) sprite.scale.copyFrom(mesh.scale);
+    else { sprite.width = mesh.width; sprite.height = mesh.height; }
+    sprite.tint = mesh.tint ?? 0xffffff;
+    sprite.alpha = opacity * (mesh.alpha ?? 1);
+    sprite.visible = mesh.visible !== false && mesh.renderable !== false;
+  }
+
+  _createAreaEffect(area, sourceTexture, maskTexture, submersion, mesh) {
     const opacity = Number(area.settings.opacity ?? 1);
-    sprite.alpha = submersion ? Math.min(0.58, opacity * 0.52) : opacity;
-    sprite.eventMode = "none";
 
     const filter = new PIXI.Filter(VERTEX_SHADER, FRAGMENT_SHADER, {
       uTime: 0,
@@ -324,13 +367,16 @@ export class WaterRenderer {
       uDungeondraftRipple: this.dungeondraftRippleTexture ?? PIXI.Texture.WHITE,
       uUseTokenMask: submersion ? 1 : 0,
       uDirectToken: 0,
+      uSurface: submersion ? 0 : 1,
+      uLocalSource: 1,
+      uOpacity: opacity,
       uSceneAnchor: [0, 0],
       uSceneSize: [1, 1],
       uScreenPixel: [1, 1],
       uStageScale: 1,
       uWaveScale: Number(area.settings.waveScale ?? 70),
       uDistortion: Number(area.settings.distortion ?? 2.2),
-      uTextureSize: [texture.orig.width, texture.orig.height],
+      uTextureSize: [sourceTexture.orig.width, sourceTexture.orig.height],
       uTint: hexToRgb(area.settings.tint),
       uTintStrength: Number(area.settings.tintStrength ?? 0.08),
       uWaveStyle: area.settings.wavePreset === "bubbling"
@@ -344,10 +390,19 @@ export class WaterRenderer {
     filter.padding = Math.ceil(Number(area.settings.distortion ?? 2.2) * 3);
     filter._pf1eAnimatedWaterSpeed = Number(area.settings.speed ?? 0.35);
     this._updateTransformUniforms(filter);
-    sprite.filters = [filter];
-
     this.filters.push(filter);
-    (submersion ? this.submersionContainer : this.container).addChild(sprite);
+    if (submersion) {
+      const sprite = new PIXI.Sprite(mesh.texture);
+      sprite.eventMode = "none";
+      sprite.filters = [filter];
+      const binding = { mesh, sprite, opacity: Math.min(0.58, opacity * 0.52) };
+      this._syncOverlay(binding);
+      this.overlayBindings.push(binding);
+      this.submersionContainer.addChild(sprite);
+    } else {
+      mesh.filters = [...(mesh.filters ?? []), filter];
+      this.surfaceFilterBindings.push({ mesh, filter });
+    }
   }
 
   _createTokenEffect(token, areas, sourceTexture) {
@@ -362,6 +417,9 @@ export class WaterRenderer {
       uDungeondraftRipple: this.dungeondraftRippleTexture ?? PIXI.Texture.WHITE,
       uUseTokenMask: 0,
       uDirectToken: 1,
+      uSurface: 0,
+      uLocalSource: 0,
+      uOpacity: 1,
       uSceneAnchor: [0, 0],
       uSceneSize: [1, 1],
       uScreenPixel: [1, 1],
@@ -517,6 +575,7 @@ export class WaterRenderer {
 
   _tick(delta) {
     this.elapsed += delta / 60;
+    for (const binding of this.overlayBindings) this._syncOverlay(binding);
     this._updateSubmersionMask();
     for (const filter of this.filters) {
       try {
@@ -558,9 +617,11 @@ export class WaterRenderer {
     const textures = this.textures.splice(0);
     const maskTextures = this.maskTextures.splice(0);
     const tokenFilterBindings = this.tokenFilterBindings.splice(0);
+    const surfaceFilterBindings = this.surfaceFilterBindings.splice(0);
+    this.overlayBindings.length = 0;
     const container = this.container;
     const submersionContainer = this.submersionContainer;
-    for (const { mesh, filter } of tokenFilterBindings) {
+    for (const { mesh, filter } of [...tokenFilterBindings, ...surfaceFilterBindings]) {
       if (!mesh || mesh.destroyed || !Array.isArray(mesh.filters)) continue;
       const remaining = mesh.filters.filter((entry) => entry !== filter);
       mesh.filters = remaining.length ? remaining : null;

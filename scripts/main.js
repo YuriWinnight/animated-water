@@ -72,7 +72,7 @@ Hooks.once("init", () => {
       }
     }
   };
-  console.log(`${MODULE_ID} | Инициализация версии 1.3.5`);
+  console.log(`${MODULE_ID} | Инициализация версии 1.3.6`);
 });
 
 Hooks.on("renderSceneControls", (controls, html) => {
@@ -196,3 +196,18 @@ Hooks.on("deleteToken", (document) => {
 Hooks.on("deleteScene", (scene) => {
   if (scene.id === canvas?.scene?.id) window.PF1EAnimatedWater?.renderer?.destroy();
 });
+
+// drawTile runs after a new or replacement mesh is ready. Document changes also
+// cover movement, visibility, elevation and deletion; refresh requests coalesce.
+Hooks.on("drawTile", (tile) => {
+  if (tile.document.parent?.id === canvas?.scene?.id) {
+    window.PF1EAnimatedWater?.renderer?.requestRefresh();
+  }
+});
+for (const hook of ["updateTile", "deleteTile"]) {
+  Hooks.on(hook, (document) => {
+    if (document.parent?.id === canvas?.scene?.id) {
+      window.PF1EAnimatedWater?.renderer?.requestRefresh();
+    }
+  });
+}
